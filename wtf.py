@@ -22,7 +22,12 @@ def get_exif(dir_name, file_name):
     return dict((kv[0].strip(), kv[1].strip()) for kv in pairs if len(kv) == 2)
 
 
-def set_exif(dir_name, file_name, timestamp_str):
+def set_exif(dir_name, file_name, timestamp_str, dry_run):
+    if dry_run:
+        LOG.info("Timestamp of '%s' would be updated to '%s' (dry run)",
+                 file_name, timestamp_str)
+        return
+
     LOG.info("Updating timestamp of '%s' to '%s'...", file_name, timestamp_str)
     command = ["exiftool", f"-EXIF:DateTimeOriginal='{timestamp_str}'",
                "-EXIF:Make=WhatsApp", "-EXIF:Model=WhatsApp",
@@ -30,7 +35,7 @@ def set_exif(dir_name, file_name, timestamp_str):
     run(command, check=True)
 
 
-def update(dir_name, file_name, received_ts):
+def update(dir_name, file_name, received_ts, dry_run):
     exif_data = get_exif(dir_name, file_name)
 
     curr_ts = exif_data.get("DateTimeOriginal")
@@ -46,34 +51,48 @@ def update(dir_name, file_name, received_ts):
                   model)
         return
 
-    set_exif(dir_name, file_name, received_ts.strftime("%Y:%m:%d %H:%M:%S"))
+    set_exif(dir_name, file_name, received_ts.strftime("%Y:%m:%d %H:%M:%S"),
+             dry_run)
 
 
-def process_dir(dir_name):
+def parse_timestamp(file_name):
+    # Try matching downloaded file names (contain date and time)
+    match = re.match(r"^WhatsApp Image (?P<datetime>[^\(]+)( \(\d+\))?\.jpeg$",
+                     file_name)
+    if match:
+        try:
+            return datetime.strptime(
+                match.group("datetime"), "%Y-%m-%d at %I.%M.%S %p")
+        except ValueError:
+            LOG.error("'%s': invalid date/time.", file_name)
+            return None
+
+    # Otherwise try matching copied file names (contain date only)
+    match = re.match(r"^IMG-(?P<date>\d+)-WA\d+\.jpg$", file_name)
+    if match:
+        try:
+            return datetime.strptime(
+                match.group("date"), "%Y%m%d")
+        except ValueError:
+            LOG.error("'%s': invalid date.", file_name)
+            return None
+
+    # Unknown file name format (exiftool does not support updating video files)
+    LOG.warning("Skipping '%s': unrecognised file name.", file_name)
+    return None
+
+
+def process_dir(dir_name, dry_run):
     LOG.debug("Scanning directory '%s'...", dir_name)
 
-    # exiftool does not support updating video files
-    pattern = re.compile(
-        r"^WhatsApp Image (?P<timestamp>[^\(]+)( \(\d+\))?\.jpeg$")
-
     for file_name in listdir(dir_name):
-        match = pattern.match(file_name)
-        if not match:
-            LOG.warning("Skipping '%s': unrecognised file name.", file_name)
-            continue
-
         if not isfile(join(dir_name, file_name)):
             LOG.warning("Skipping '%s': not a regular file.", file_name)
             continue
 
-        try:
-            timestamp = datetime.strptime(
-                match.group("timestamp"), "%Y-%m-%d at %I.%M.%S %p")
-        except ValueError:
-            LOG.error("'%s': invalid timestamp.", file_name)
-            continue
-
-        update(dir_name, file_name, timestamp)
+        timestamp = parse_timestamp(file_name)
+        if timestamp:
+            update(dir_name, file_name, timestamp, dry_run)
 
 
 def setup_log(log_level):
@@ -91,6 +110,9 @@ def parse_args():
     parser.add_argument("-d", "--debug", dest="log_level", default=INFO,
                         action="store_const", const=DEBUG,
                         help="enable debug logging")
+    parser.add_argument("-n", "--dry-run", dest="dry_run", default=False,
+                        action="store_const", const=True,
+                        help="do not update files")
     return parser.parse_args()
 
 
@@ -99,7 +121,7 @@ def main():
     setup_log(args.log_level)
 
     try:
-        process_dir(args.directory)
+        process_dir(args.directory, args.dry_run)
     except FileNotFoundError as exc:
         LOG.error("exiftool not found: %s", exc)
         return 1
