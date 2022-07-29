@@ -68,7 +68,7 @@ def parse_timestamp(file_name):
             return None
 
     # Otherwise try matching copied file names (contain date only)
-    match = re.match(r"^IMG-(?P<date>\d+)-WA\d+\.jpg$", file_name)
+    match = re.match(r"^IMG-(?P<date>\d+)-WA\d+\.(jpg|jpeg)$", file_name)
     if match:
         try:
             return datetime.strptime(
@@ -106,7 +106,7 @@ def setup_log(log_level):
 def parse_args():
     parser = ArgumentParser(description="WhatsApp Timestamp Fix")
     parser.add_argument("directory", nargs='?', default=getcwd(),
-                        help="path containing image and video files to fix")
+                        help="path containing image files to fix")
     parser.add_argument("-d", "--debug", dest="log_level", default=INFO,
                         action="store_const", const=DEBUG,
                         help="enable debug logging")
